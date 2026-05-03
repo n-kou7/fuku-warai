@@ -1,23 +1,166 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>福笑い</title>
+  <style>
+    body {
+      margin: 0;
+      background: #1a0e0a;
+      color: #f0c080;
+      font-family: "Hiragino Mincho ProN", "Yu Mincho", serif;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+    }
 
+    #app {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 18px 0 32px;
+      box-sizing: border-box;
+    }
+
+    h1 {
+      margin: 8px 0 10px;
+      font-size: 32px;
+      letter-spacing: 6px;
+    }
+
+    p {
+      color: #a08060;
+      font-size: 13px;
+      text-align: center;
+      line-height: 1.8;
+    }
+
+    button {
+      border: none;
+      border-radius: 22px;
+      padding: 9px 16px;
+      background: linear-gradient(135deg, #c8842a, #f0a040);
+      color: #1a0800;
+      font-weight: bold;
+      cursor: pointer;
+      font-family: inherit;
+    }
+
+    #uploadBox {
+      width: 260px;
+      height: 160px;
+      border: 2px dashed #6b4a28;
+      border-radius: 10px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: #8b6040;
+      cursor: pointer;
+      background: rgba(255,255,255,0.03);
+    }
+
+    #stage {
+      position: relative;
+      width: 340px;
+      overflow: hidden;
+      border-radius: 12px;
+      box-shadow: 0 12px 48px rgba(0,0,0,0.8);
+      touch-action: none;
+    }
+
+    .box {
+      position: absolute;
+      box-sizing: border-box;
+      cursor: grab;
+    }
+
+    .piece {
+      position: absolute;
+      transform-origin: center center;
+      touch-action: none;
+    }
+
+    .piece img {
+      width: 100%;
+      height: 100%;
+      display: block;
+      border: 2px solid rgba(240,160,64,.85);
+      border-radius: 4px;
+      box-sizing: border-box;
+      cursor: grab;
+    }
+
+    .label {
+      position: absolute;
+      bottom: -18px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(200,100,30,.92);
+      color: #fff5e0;
+      font-size: 10px;
+      padding: 1px 7px;
+      border-radius: 8px;
+      white-space: nowrap;
+      pointer-events: none;
+    }
+
+    .rot {
+      position: absolute;
+      top: -14px;
+      right: -14px;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: #f0a040;
+      color: #1a0800;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      cursor: grab;
+      box-shadow: 0 2px 6px rgba(0,0,0,.5);
+    }
+
+    #buttons {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: center;
+      margin-top: 18px;
+    }
+  </style>
+</head>
+
+<body>
+<div id="app"></div>
+
+<script>
 const W = 340;
 const TRAY_H = 240;
 const MAX_PX = 400;
 
 const DEFAULT_PARTS = [
-  { id: "left_eye", label: "左目", color: "#38bdf8", x: 0.22, y: 0.36, w: 0.22, h: 0.11 },
-  { id: "right_eye", label: "右目", color: "#818cf8", x: 0.56, y: 0.36, w: 0.22, h: 0.11 },
-  { id: "left_eyebrow", label: "左眉", color: "#34d399", x: 0.19, y: 0.27, w: 0.26, h: 0.08 },
-  { id: "right_eyebrow", label: "右眉", color: "#a78bfa", x: 0.55, y: 0.27, w: 0.26, h: 0.08 },
-  { id: "nose", label: "鼻", color: "#fb923c", x: 0.37, y: 0.50, w: 0.26, h: 0.18 },
-  { id: "mouth", label: "口", color: "#f472b6", x: 0.28, y: 0.70, w: 0.44, h: 0.12 }
+  { id:"left_eye", label:"左目", color:"#38bdf8", x:.22, y:.36, w:.22, h:.11 },
+  { id:"right_eye", label:"右目", color:"#818cf8", x:.56, y:.36, w:.22, h:.11 },
+  { id:"left_eyebrow", label:"左眉", color:"#34d399", x:.19, y:.27, w:.26, h:.08 },
+  { id:"right_eyebrow", label:"右眉", color:"#a78bfa", x:.55, y:.27, w:.26, h:.08 },
+  { id:"nose", label:"鼻", color:"#fb923c", x:.37, y:.50, w:.26, h:.18 },
+  { id:"mouth", label:"口", color:"#f472b6", x:.28, y:.70, w:.44, h:.12 }
 ];
 
-const noSelect = {
-  WebkitTouchCallout: "none",
-  WebkitUserSelect: "none",
-  userSelect: "none"
-};
+let phase = "upload";
+let srcCanvas = null;
+let parts = structuredClone(DEFAULT_PARTS);
+let gameData = null;
+let pieces = [];
+let dragging = null;
+let rotating = null;
+let hint = false;
+
+const app = document.getElementById("app");
 
 function getXY(e) {
   const t = e.touches?.[0] || e.changedTouches?.[0];
@@ -27,14 +170,404 @@ function getXY(e) {
   };
 }
 
-async function fileToCanvas(file) {
-  let src = null;
+function renderUpload() {
+  app.innerHTML = `
+    <div style="font-size:60px">🎭</div>
+    <h1>福笑い</h1>
+    <p>顔写真を選ぶと、イラスト風に変換して<br>パーツを切り抜いて遊べます</p>
+    <div id="uploadBox">
+      <div style="font-size:44px">📷</div>
+      <div style="font-weight:bold">写真を選ぶ</div>
+      <div style="font-size:11px;opacity:.7">JPEG・PNG</div>
+    </div>
+    <input id="fileInput" type="file" accept="image/*" style="display:none">
+  `;
 
-  const loaders = [
-    () => createImageBitmap(file),
-    () =>
-      new Promise((res, rej) => {
-        const url = URL.createObjectURL(file);
+  document.getElementById("uploadBox").onclick = () => {
+    document.getElementById("fileInput").click();
+  };
+
+  document.getElementById("fileInput").onchange = async e => {
+    if (!e.target.files[0]) return;
+    srcCanvas = await fileToCanvas(e.target.files[0]);
+    parts = structuredClone(DEFAULT_PARTS);
+    phase = "manual";
+    renderManual();
+  };
+}
+
+async function fileToCanvas(file) {
+  const url = URL.createObjectURL(file);
+  const img = new Image();
+
+  await new Promise((res, rej) => {
+    img.onload = res;
+    img.onerror = rej;
+    img.src = url;
+  });
+
+  URL.revokeObjectURL(url);
+
+  const r = Math.min(MAX_PX / img.width, MAX_PX / img.height, 1);
+  const cw = Math.round(img.width * r);
+  const ch = Math.round(img.height * r);
+
+  const c = document.createElement("canvas");
+  c.width = cw;
+  c.height = ch;
+  c.getContext("2d").drawImage(img, 0, 0, cw, ch);
+
+  return c;
+}
+
+function stylizeCanvas(src) {
+  const c = document.createElement("canvas");
+  c.width = src.width;
+  c.height = src.height;
+
+  const ctx = c.getContext("2d");
+  ctx.drawImage(src, 0, 0);
+
+  const img = ctx.getImageData(0, 0, c.width, c.height);
+  const d = img.data;
+
+  for (let i = 0; i < d.length; i += 4) {
+    let r = d[i] * 1.08 + 8;
+    let g = d[i + 1] * 1.05 + 6;
+    let b = d[i + 2] * 1.02 + 4;
+
+    const step = 28;
+    d[i] = Math.round(Math.min(255, r) / step) * step;
+    d[i + 1] = Math.round(Math.min(255, g) / step) * step;
+    d[i + 2] = Math.round(Math.min(255, b) / step) * step;
+  }
+
+  ctx.putImageData(img, 0, 0);
+
+  ctx.globalAlpha = .18;
+  ctx.filter = "blur(1.2px)";
+  ctx.drawImage(c, 0, 0);
+  ctx.filter = "none";
+  ctx.globalAlpha = 1;
+
+  return c;
+}
+
+function renderManual() {
+  const dh = Math.round(W * srcCanvas.height / srcCanvas.width);
+  const styled = stylizeCanvas(srcCanvas);
+  const imgUrl = styled.toDataURL("image/jpeg", .9);
+
+  app.innerHTML = `
+    <h1 style="font-size:22px">🎭 パーツ位置</h1>
+    <p>枠をドラッグして、眉毛・目・鼻・口に合わせてください</p>
+    <div id="stage" style="height:${dh}px">
+      <img src="${imgUrl}" draggable="false" style="position:absolute;left:0;top:0;width:${W}px;height:${dh}px">
+    </div>
+    <div id="buttons">
+      <button id="resetParts">リセット</button>
+      <button id="startGame">ゲームスタート！</button>
+    </div>
+  `;
+
+  const stage = document.getElementById("stage");
+
+  parts.forEach(p => {
+    const el = document.createElement("div");
+    el.className = "box";
+    el.dataset.id = p.id;
+    el.style.left = p.x * W + "px";
+    el.style.top = p.y * dh + "px";
+    el.style.width = p.w * W + "px";
+    el.style.height = p.h * dh + "px";
+    el.style.border = `2px solid ${p.color}`;
+    el.style.background = `${p.color}28`;
+    el.innerHTML = `<div style="position:absolute;top:-16px;left:0;background:${p.color};color:#000;font-size:9px;padding:1px 5px;font-weight:bold">${p.label}</div>`;
+
+    el.onpointerdown = e => {
+      e.preventDefault();
+      const rect = stage.getBoundingClientRect();
+      const sc = rect.width / W;
+      dragging = {
+        type: "manual",
+        id: p.id,
+        ox: (e.clientX - rect.left) / sc - p.x * W,
+        oy: (e.clientY - rect.top) / sc - p.y * dh
+      };
+    };
+
+    stage.appendChild(el);
+  });
+
+  window.onpointermove = e => manualMove(e, dh);
+  window.onpointerup = () => dragging = null;
+
+  document.getElementById("resetParts").onclick = () => {
+    parts = structuredClone(DEFAULT_PARTS);
+    renderManual();
+  };
+
+  document.getElementById("startGame").onclick = () => {
+    gameData = buildGame(srcCanvas, parts);
+    pieces = scatter(gameData.pieces, gameData.displayH);
+    phase = "game";
+    renderGame();
+  };
+}
+
+function manualMove(e, dh) {
+  if (!dragging || dragging.type !== "manual") return;
+
+  const stage = document.getElementById("stage");
+  const rect = stage.getBoundingClientRect();
+  const sc = rect.width / W;
+
+  const p = parts.find(q => q.id === dragging.id);
+  const nx = ((e.clientX - rect.left) / sc - dragging.ox) / W;
+  const ny = ((e.clientY - rect.top) / sc - dragging.oy) / dh;
+
+  p.x = Math.max(0, Math.min(1 - p.w, nx));
+  p.y = Math.max(0, Math.min(1 - p.h, ny));
+
+  renderManual();
+}
+
+function fillSkin(ctx, x, y, fw, fh, cw, ch) {
+  const samples = [];
+
+  function addSample(sx, sy, sw, sh) {
+    if (sx < 0 || sy < 0 || sx + sw > cw || sy + sh > ch) return;
+    const data = ctx.getImageData(sx, sy, sw, sh).data;
+    for (let i = 0; i < data.length; i += 4) {
+      samples.push([data[i], data[i + 1], data[i + 2]]);
+    }
+  }
+
+  const s = Math.max(4, Math.round(Math.min(fw, fh) * .25));
+
+  addSample(x, y - s, fw, s);
+  addSample(x, y + fh, fw, s);
+  addSample(x - s, y, s, fh);
+  addSample(x + fw, y, s, fh);
+
+  let r = 230, g = 190, b = 155;
+
+  if (samples.length) {
+    r = Math.round(samples.reduce((a,c)=>a+c[0],0) / samples.length);
+    g = Math.round(samples.reduce((a,c)=>a+c[1],0) / samples.length);
+    b = Math.round(samples.reduce((a,c)=>a+c[2],0) / samples.length);
+  }
+
+  ctx.save();
+  ctx.fillStyle = `rgb(${r},${g},${b})`;
+  ctx.fillRect(x, y, fw, fh);
+
+  ctx.globalAlpha = .4;
+  ctx.filter = "blur(5px)";
+  ctx.fillRect(x - 4, y - 4, fw + 8, fh + 8);
+  ctx.restore();
+}
+
+function buildGame(src, feats) {
+  const styled = stylizeCanvas(src);
+  const cw = styled.width;
+  const ch = styled.height;
+  const dh = Math.round(W * ch / cw);
+
+  const mc = document.createElement("canvas");
+  mc.width = cw;
+  mc.height = ch;
+
+  const ctx = mc.getContext("2d");
+  ctx.drawImage(styled, 0, 0);
+
+  feats.forEach(f => {
+    const pad = Math.round(cw * .018);
+    const x = Math.max(0, Math.round(f.x * cw) - pad);
+    const y = Math.max(0, Math.round(f.y * ch) - pad);
+    const fw = Math.min(cw - x, Math.round(f.w * cw) + pad * 2);
+    const fh = Math.min(ch - y, Math.round(f.h * ch) + pad * 2);
+    fillSkin(ctx, x, y, fw, fh, cw, ch);
+  });
+
+  const pieces = feats.map(f => {
+    const px = Math.round(f.x * cw);
+    const py = Math.round(f.y * ch);
+    const pw = Math.round(f.w * cw);
+    const ph = Math.round(f.h * ch);
+
+    const fc = document.createElement("canvas");
+    fc.width = pw;
+    fc.height = ph;
+    fc.getContext("2d").drawImage(styled, px, py, pw, ph, 0, 0, pw, ph);
+
+    return {
+      id: f.id,
+      label: f.label,
+      dataUrl: fc.toDataURL("image/png"),
+      origX: Math.round(f.x * W),
+      origY: Math.round(f.y * dh),
+      w: Math.max(24, Math.round(f.w * W)),
+      h: Math.max(14, Math.round(f.h * dh)),
+      currentX: 0,
+      currentY: 0,
+      rotation: 0
+    };
+  });
+
+  return {
+    maskedUrl: mc.toDataURL("image/jpeg", .9),
+    origUrl: styled.toDataURL("image/jpeg", .9),
+    displayH: dh,
+    pieces
+  };
+}
+
+function scatter(arr, dh) {
+  const cols = 3;
+  const colW = Math.floor((W - 16) / cols);
+
+  return arr.map((p, i) => ({
+    ...p,
+    currentX: 8 + (i % cols) * colW,
+    currentY: dh + 30 + Math.floor(i / cols) * 96,
+    rotation: (Math.random() - .5) * 60
+  }));
+}
+
+function renderGame() {
+  const totalH = gameData.displayH + TRAY_H;
+
+  app.innerHTML = `
+    <h1 style="font-size:24px">🎭 福笑い</h1>
+    <div id="stage" style="height:${totalH}px">
+      <img src="${hint ? gameData.origUrl : gameData.maskedUrl}" draggable="false" style="position:absolute;left:0;top:0;width:${W}px;height:${gameData.displayH}px">
+      <div style="position:absolute;left:0;top:${gameData.displayH}px;width:100%;height:${TRAY_H}px;background:#1e1208;border-top:1px solid rgba(200,130,50,.35)"></div>
+    </div>
+    <div id="buttons">
+      <button id="shuffle">シャッフル</button>
+      <button id="answer">答え合わせ</button>
+      <button id="hint">ヒント</button>
+      <button id="change">写真を変える</button>
+    </div>
+  `;
+
+  const stage = document.getElementById("stage");
+
+  pieces.forEach((p, idx) => {
+    const el = document.createElement("div");
+    el.className = "piece";
+    el.dataset.id = p.id;
+    el.style.left = p.currentX + "px";
+    el.style.top = p.currentY + "px";
+    el.style.width = p.w + "px";
+    el.style.height = p.h + "px";
+    el.style.transform = `rotate(${p.rotation}deg)`;
+    el.style.zIndex = 100 + idx;
+
+    el.innerHTML = `
+      <img src="${p.dataUrl}" draggable="false">
+      <div class="label">${p.label}</div>
+      <div class="rot">↻</div>
+    `;
+
+    el.querySelector("img").onpointerdown = e => {
+      e.preventDefault();
+      const rect = stage.getBoundingClientRect();
+      const sc = rect.width / W;
+      dragging = {
+        type: "piece",
+        id: p.id,
+        ox: (e.clientX - rect.left) / sc - p.currentX,
+        oy: (e.clientY - rect.top) / sc - p.currentY
+      };
+    };
+
+    el.querySelector(".rot").onpointerdown = e => {
+      e.preventDefault();
+      e.stopPropagation();
+      const rect = stage.getBoundingClientRect();
+      const sc = rect.width / W;
+      const cx = p.currentX + p.w / 2;
+      const cy = p.currentY + p.h / 2;
+      rotating = {
+        id: p.id,
+        startAngle: Math.atan2((e.clientY - rect.top) / sc - cy, (e.clientX - rect.left) / sc - cx),
+        startRotation: p.rotation,
+        cx,
+        cy
+      };
+    };
+
+    stage.appendChild(el);
+  });
+
+  window.onpointermove = gameMove;
+  window.onpointerup = () => {
+    dragging = null;
+    rotating = null;
+  };
+
+  document.getElementById("shuffle").onclick = () => {
+    pieces = scatter(gameData.pieces, gameData.displayH);
+    renderGame();
+  };
+
+  document.getElementById("answer").onclick = () => {
+    pieces = pieces.map(p => ({
+      ...p,
+      currentX: p.origX,
+      currentY: p.origY,
+      rotation: 0
+    }));
+    renderGame();
+  };
+
+  document.getElementById("hint").onpointerdown = () => {
+    hint = true;
+    renderGame();
+  };
+
+  document.getElementById("hint").onpointerup = () => {
+    hint = false;
+    renderGame();
+  };
+
+  document.getElementById("change").onclick = () => {
+    phase = "upload";
+    hint = false;
+    renderUpload();
+  };
+}
+
+function gameMove(e) {
+  const stage = document.getElementById("stage");
+  if (!stage) return;
+
+  const rect = stage.getBoundingClientRect();
+  const sc = rect.width / W;
+
+  if (dragging?.type === "piece") {
+    const p = pieces.find(q => q.id === dragging.id);
+    p.currentX = (e.clientX - rect.left) / sc - dragging.ox;
+    p.currentY = (e.clientY - rect.top) / sc - dragging.oy;
+    renderGame();
+  }
+
+  if (rotating) {
+    const p = pieces.find(q => q.id === rotating.id);
+    const nx = (e.clientX - rect.left) / sc;
+    const ny = (e.clientY - rect.top) / sc;
+    const cur = Math.atan2(ny - rotating.cy, nx - rotating.cx);
+    p.rotation = rotating.startRotation + ((cur - rotating.startAngle) * 180 / Math.PI);
+    renderGame();
+  }
+}
+
+renderUpload();
+</script>
+</body>
+</html>        const url = URL.createObjectURL(file);
         const img = new Image();
         img.onload = () => {
           URL.revokeObjectURL(url);
