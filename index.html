@@ -1,442 +1,811 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>福笑い</title>
-<style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: #1a0e0a; overscroll-behavior: none; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  @keyframes dot  { 0%,80%,100%{transform:scale(0.5);opacity:0.3} 40%{transform:scale(1.3);opacity:1} }
-</style>
-</head>
-<body>
-<div id="root"></div>
-
-<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
-
-<script type="text/babel">
-const { useState, useRef, useEffect, useCallback } = React;
+import { useState, useRef, useEffect, useCallback } from "react";
 
 const W = 340;
 const TRAY_H = 240;
 const MAX_PX = 400;
 
 const DEFAULT_PARTS = [
-  { id:"left_eye",      label:"左目", color:"#38bdf8", x:0.22, y:0.36, w:0.22, h:0.11 },
-  { id:"right_eye",     label:"右目", color:"#818cf8", x:0.56, y:0.36, w:0.22, h:0.11 },
-  { id:"left_eyebrow",  label:"左眉", color:"#34d399", x:0.19, y:0.27, w:0.26, h:0.08 },
-  { id:"right_eyebrow", label:"右眉", color:"#a78bfa", x:0.55, y:0.27, w:0.26, h:0.08 },
-  { id:"nose",          label:"鼻",   color:"#fb923c", x:0.37, y:0.50, w:0.26, h:0.18 },
-  { id:"mouth",         label:"口",   color:"#f472b6", x:0.28, y:0.70, w:0.44, h:0.12 },
+  { id: "left_eye", label: "左目", color: "#38bdf8", x: 0.22, y: 0.36, w: 0.22, h: 0.11 },
+  { id: "right_eye", label: "右目", color: "#818cf8", x: 0.56, y: 0.36, w: 0.22, h: 0.11 },
+  { id: "left_eyebrow", label: "左眉", color: "#34d399", x: 0.19, y: 0.27, w: 0.26, h: 0.08 },
+  { id: "right_eyebrow", label: "右眉", color: "#a78bfa", x: 0.55, y: 0.27, w: 0.26, h: 0.08 },
+  { id: "nose", label: "鼻", color: "#fb923c", x: 0.37, y: 0.50, w: 0.26, h: 0.18 },
+  { id: "mouth", label: "口", color: "#f472b6", x: 0.28, y: 0.70, w: 0.44, h: 0.12 }
 ];
 
-// ─── HEIC loader ───────────────────────────────────────────────
-let _h2aP = null;
-function loadHeic2Any() {
-  if (_h2aP) return _h2aP;
-  _h2aP = new Promise((res, rej) => {
-    if (window.heic2any) { res(window.heic2any); return; }
-    const s = document.createElement("script");
-    s.src = "https://cdnjs.cloudflare.com/ajax/libs/heic2any/0.0.4/heic2any.min.js";
-    s.onload = () => res(window.heic2any);
-    s.onerror = () => {
-      const s2 = document.createElement("script");
-      s2.src = "https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js";
-      s2.onload = () => res(window.heic2any);
-      s2.onerror = () => rej(new Error("heic2any load failed"));
-      document.head.appendChild(s2);
-    };
-    document.head.appendChild(s);
-  });
-  return _h2aP;
+const noSelect = {
+  WebkitTouchCallout: "none",
+  WebkitUserSelect: "none",
+  userSelect: "none"
+};
+
+function getXY(e) {
+  const t = e.touches?.[0] || e.changedTouches?.[0];
+  return {
+    x: e.clientX ?? t?.clientX ?? 0,
+    y: e.clientY ?? t?.clientY ?? 0
+  };
 }
 
 async function fileToCanvas(file) {
-  const isHeic = /^image\/(heic|heif)$/i.test(file.type) || /\.(heic|heif)$/i.test(file.name);
-  let workFile = file;
-  if (isHeic) {
-    try {
-      const fn = await loadHeic2Any();
-      const r = await fn({ blob: file, toType: "image/jpeg", quality: 0.82 });
-      workFile = Array.isArray(r) ? r[0] : r;
-    } catch { /* fall through */ }
-  }
   let src = null;
-  for (const fn of [
-    () => createImageBitmap(workFile),
-    () => new Promise((res, rej) => {
-      const url = URL.createObjectURL(workFile);
-      const img = new Image();
-      img.onload = () => { URL.revokeObjectURL(url); res(img); };
-      img.onerror = () => { URL.revokeObjectURL(url); rej(); };
-      img.src = url;
-    }),
-    () => new Promise((res, rej) => {
-      const fr = new FileReader();
-      fr.onload = () => { const img = new Image(); img.onload = () => res(img); img.onerror = rej; img.src = fr.result; };
-      fr.onerror = rej;
-      fr.readAsDataURL(workFile);
-    }),
-  ]) { try { src = await fn(); break; } catch { /* next */ } }
+
+  const loaders = [
+    () => createImageBitmap(file),
+    () =>
+      new Promise((res, rej) => {
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.onload = () => {
+          URL.revokeObjectURL(url);
+          res(img);
+        };
+        img.onerror = () => {
+          URL.revokeObjectURL(url);
+          rej(new Error("画像を読み込めませんでした"));
+        };
+        img.src = url;
+      }),
+    () =>
+      new Promise((res, rej) => {
+        const fr = new FileReader();
+        fr.onload = () => {
+          const img = new Image();
+          img.onload = () => res(img);
+          img.onerror = () => rej(new Error("画像を読み込めませんでした"));
+          img.src = fr.result;
+        };
+        fr.onerror = () => rej(new Error("画像を読み込めませんでした"));
+        fr.readAsDataURL(file);
+      })
+  ];
+
+  for (const loader of loaders) {
+    try {
+      src = await loader();
+      break;
+    } catch {
+      // next
+    }
+  }
+
   if (!src) throw new Error("画像を読み込めませんでした");
-  const sw = src.width ?? src.naturalWidth, sh = src.height ?? src.naturalHeight;
-  if (!sw || !sh) throw new Error("画像サイズ取得失敗");
+
+  const sw = src.width ?? src.naturalWidth;
+  const sh = src.height ?? src.naturalHeight;
   const r = Math.min(MAX_PX / sw, MAX_PX / sh, 1);
-  const cw = Math.round(sw * r), ch = Math.round(sh * r);
-  const c = document.createElement("canvas"); c.width = cw; c.height = ch;
-  c.getContext("2d").drawImage(src, 0, 0, cw, ch);
-  src.close && src.close();
+
+  const cw = Math.round(sw * r);
+  const ch = Math.round(sh * r);
+
+  const c = document.createElement("canvas");
+  c.width = cw;
+  c.height = ch;
+
+  const ctx = c.getContext("2d");
+  ctx.drawImage(src, 0, 0, cw, ch);
+
+  src.close?.();
+
   return c;
 }
 
-// ─── API detection ─────────────────────────────────────────────
-async function apiDetect(canvas) {
-  const raw = canvas.toDataURL("image/jpeg", 0.72);
-  const b64 = raw.split(",")[1] && raw.split(",")[1].replace(/\s+/g, "");
-  if (!b64 || b64.length < 500) throw new Error("canvas empty");
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-20250514", max_tokens: 600,
-      messages: [{ role: "user", content: [
-        { type: "image", source: { type: "base64", media_type: "image/jpeg", data: b64 } },
-        { type: "text", text: '顔パーツ座標をJSONのみで返して。\n{"features":[{"id":"left_eye","label":"左目","x":数値,"y":数値,"w":数値,"h":数値},{"id":"right_eye","label":"右目","x":数値,"y":数値,"w":数値,"h":数値},{"id":"left_eyebrow","label":"左眉","x":数値,"y":数値,"w":数値,"h":数値},{"id":"right_eyebrow","label":"右眉","x":数値,"y":数値,"w":数値,"h":数値},{"id":"nose","label":"鼻","x":数値,"y":数値,"w":数値,"h":数値},{"id":"mouth","label":"口","x":数値,"y":数値,"w":数値,"h":数値}]}\nx,yはパーツ左上角（0〜1の相対値）。' }
-      ]}]
-    })
-  });
-  const data = await res.json();
-  if (!res.ok || data.error) throw new Error(data.error && data.error.message || "HTTP " + res.status);
-  const text = (data.content && data.content.find(c => c.type === "text") || {}).text || "";
-  const m = text.match(/\{[\s\S]*\}/);
-  if (!m) throw new Error("no json");
-  const feats = (JSON.parse(m[0]).features) || [];
-  const valid = feats.filter(f => f.w > 0.02 && f.h > 0.01 && f.x >= 0 && f.y >= 0);
-  if (!valid.length) throw new Error("no features");
-  return valid;
+function stylizeCanvas(srcCanvas) {
+  const w = srcCanvas.width;
+  const h = srcCanvas.height;
+
+  const c = document.createElement("canvas");
+  c.width = w;
+  c.height = h;
+
+  const ctx = c.getContext("2d");
+  ctx.drawImage(srcCanvas, 0, 0);
+
+  const img = ctx.getImageData(0, 0, w, h);
+  const d = img.data;
+
+  for (let i = 0; i < d.length; i += 4) {
+    let r = d[i];
+    let g = d[i + 1];
+    let b = d[i + 2];
+
+    r = Math.min(255, r * 1.08 + 8);
+    g = Math.min(255, g * 1.05 + 6);
+    b = Math.min(255, b * 1.02 + 4);
+
+    const step = 28;
+    d[i] = Math.round(r / step) * step;
+    d[i + 1] = Math.round(g / step) * step;
+    d[i + 2] = Math.round(b / step) * step;
+  }
+
+  ctx.putImageData(img, 0, 0);
+
+  ctx.globalAlpha = 0.18;
+  ctx.filter = "blur(1.2px)";
+  ctx.drawImage(c, 0, 0);
+  ctx.filter = "none";
+  ctx.globalAlpha = 1;
+
+  return c;
 }
 
-// ─── Build game data ────────────────────────────────────────────
-function buildGame(srcCanvas, feats) {
-  const cw = srcCanvas.width, ch = srcCanvas.height;
-  const dh = Math.round(W * ch / cw);
-  const origUrl = srcCanvas.toDataURL("image/jpeg", 0.82);
+function fillSkin(ctx, baseCanvas, x, y, fw, fh) {
+  const cw = baseCanvas.width;
+  const ch = baseCanvas.height;
+  const samples = [];
 
-  const mc = document.createElement("canvas"); mc.width = cw; mc.height = ch;
+  const addSample = (sx, sy, sw, sh) => {
+    if (sx < 0 || sy < 0 || sx + sw > cw || sy + sh > ch) return;
+    const data = ctx.getImageData(sx, sy, sw, sh).data;
+    for (let i = 0; i < data.length; i += 4) {
+      samples.push([data[i], data[i + 1], data[i + 2]]);
+    }
+  };
+
+  const s = Math.max(4, Math.round(Math.min(fw, fh) * 0.25));
+
+  addSample(x, y - s, fw, s);
+  addSample(x, y + fh, fw, s);
+  addSample(x - s, y, s, fh);
+  addSample(x + fw, y, s, fh);
+
+  let r = 230;
+  let g = 190;
+  let b = 155;
+
+  if (samples.length) {
+    r = Math.round(samples.reduce((a, c) => a + c[0], 0) / samples.length);
+    g = Math.round(samples.reduce((a, c) => a + c[1], 0) / samples.length);
+    b = Math.round(samples.reduce((a, c) => a + c[2], 0) / samples.length);
+  }
+
+  ctx.save();
+  ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+  ctx.fillRect(x, y, fw, fh);
+
+  ctx.globalAlpha = 0.4;
+  ctx.filter = "blur(5px)";
+  ctx.fillRect(x - 4, y - 4, fw + 8, fh + 8);
+
+  ctx.filter = "none";
+  ctx.globalAlpha = 1;
+
+  ctx.strokeStyle = "rgba(120,80,40,0.25)";
+  ctx.setLineDash([4, 3]);
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(x + 1, y + 1, fw - 2, fh - 2);
+  ctx.setLineDash([]);
+
+  ctx.restore();
+}
+
+function buildGame(srcCanvas, feats) {
+  const styledCanvas = stylizeCanvas(srcCanvas);
+
+  const cw = styledCanvas.width;
+  const ch = styledCanvas.height;
+  const dh = Math.round((W * ch) / cw);
+
+  const origUrl = styledCanvas.toDataURL("image/jpeg", 0.9);
+
+  const mc = document.createElement("canvas");
+  mc.width = cw;
+  mc.height = ch;
+
   const ctx = mc.getContext("2d");
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = "high";
-  ctx.drawImage(srcCanvas, 0, 0);
+  ctx.drawImage(styledCanvas, 0, 0);
 
-  feats.forEach(f => {
+  feats.forEach((f) => {
     const pad = Math.round(cw * 0.018);
-    const x  = Math.max(0,    Math.round(f.x * cw) - pad);
-    const y  = Math.max(0,    Math.round(f.y * ch) - pad);
+    const x = Math.max(0, Math.round(f.x * cw) - pad);
+    const y = Math.max(0, Math.round(f.y * ch) - pad);
     const fw = Math.min(cw - x, Math.round(f.w * cw) + pad * 2);
     const fh = Math.min(ch - y, Math.round(f.h * ch) + pad * 2);
 
-    const stripH = Math.max(6, Math.min(30, Math.round(fh * 0.45)));
-    const stripW = Math.max(6, Math.min(30, Math.round(fw * 0.45)));
-
-    const stretch = (sx, sy, sw2, sh2, alpha) => {
-      if (sw2 <= 0 || sh2 <= 0) return;
-      const tiny = document.createElement("canvas");
-      tiny.width  = (sh2 === 1 || fw > fh) ? Math.min(fw, 16) : 1;
-      tiny.height = (sw2 === 1 || fh >= fw) ? Math.min(fh, 16) : 1;
-      tiny.getContext("2d").drawImage(srcCanvas, sx, sy, sw2, sh2, 0, 0, tiny.width, tiny.height);
-      ctx.save();
-      if (alpha != null && alpha < 1) ctx.globalAlpha = alpha;
-      ctx.drawImage(tiny, 0, 0, tiny.width, tiny.height, x, y, fw, fh);
-      ctx.restore();
-    };
-
-    if (y >= stripH)              stretch(x, y - stripH, fw, stripH);
-    if (y + fh + stripH <= ch)    stretch(x, y + fh, fw, stripH, 0.55);
-    if (x >= stripW)              stretch(x - stripW, y, stripW, fh, 0.35);
-    if (x + fw + stripW <= cw)    stretch(x + fw, y, stripW, fh, 0.35);
-
-    ctx.strokeStyle = "rgba(100,70,30,0.28)";
-    ctx.setLineDash([Math.round(cw * 0.01), Math.round(cw * 0.007)]);
-    ctx.lineWidth = Math.max(1.5, cw * 0.003);
-    ctx.strokeRect(x + 1, y + 1, fw - 2, fh - 2);
-    ctx.setLineDash([]);
+    fillSkin(ctx, styledCanvas, x, y, fw, fh);
   });
 
-  const pieces = feats.map(f => {
-    const px = Math.round(f.x * cw), py = Math.round(f.y * ch);
-    const pw = Math.round(f.w * cw), ph = Math.round(f.h * ch);
-    const fc = document.createElement("canvas"); fc.width = pw; fc.height = ph;
-    fc.getContext("2d").drawImage(srcCanvas, px, py, pw, ph, 0, 0, pw, ph);
+  const pieces = feats.map((f) => {
+    const px = Math.round(f.x * cw);
+    const py = Math.round(f.y * ch);
+    const pw = Math.round(f.w * cw);
+    const ph = Math.round(f.h * ch);
+
+    const fc = document.createElement("canvas");
+    fc.width = pw;
+    fc.height = ph;
+
+    fc.getContext("2d").drawImage(styledCanvas, px, py, pw, ph, 0, 0, pw, ph);
+
     return {
-      id: f.id, label: f.label, dataUrl: fc.toDataURL("image/jpeg", 0.82),
-      origX: Math.round(f.x * W), origY: Math.round(f.y * dh),
-      w: Math.max(24, Math.round(f.w * W)), h: Math.max(14, Math.round(f.h * dh)),
-      currentX: 0, currentY: 0, rotation: 0
+      id: f.id,
+      label: f.label,
+      dataUrl: fc.toDataURL("image/png"),
+      origX: Math.round(f.x * W),
+      origY: Math.round(f.y * dh),
+      w: Math.max(24, Math.round(f.w * W)),
+      h: Math.max(14, Math.round(f.h * dh)),
+      currentX: 0,
+      currentY: 0,
+      rotation: 0
     };
   });
 
-  return { maskedUrl: mc.toDataURL("image/jpeg", 0.82), origUrl, displayH: dh, pieces };
+  return {
+    maskedUrl: mc.toDataURL("image/jpeg", 0.9),
+    origUrl,
+    displayH: dh,
+    pieces
+  };
 }
 
 function scatter(pieces, dh) {
-  const cols = 3, colW = Math.floor((W - 16) / cols);
+  const cols = 3;
+  const colW = Math.floor((W - 16) / cols);
+
   return pieces.map((p, i) => ({
     ...p,
     currentX: 8 + (i % cols) * colW + (Math.random() - 0.5) * 12,
     currentY: dh + 30 + Math.floor(i / cols) * 96 + (Math.random() - 0.5) * 8,
-    rotation: (Math.random() - 0.5) * 60,
+    rotation: (Math.random() - 0.5) * 60
   }));
 }
 
-const getXY = e => {
-  const t = e.touches && e.touches[0] || e.changedTouches && e.changedTouches[0];
-  return { x: e.clientX != null ? e.clientX : (t ? t.clientX : 0), y: e.clientY != null ? e.clientY : (t ? t.clientY : 0) };
-};
-
-const noSelect = { WebkitTouchCallout: "none", WebkitUserSelect: "none", userSelect: "none" };
-
-// ─── ManualScreen ──────────────────────────────────────────────
 function ManualScreen({ srcCanvas, onStart }) {
-  const dh = Math.round(W * srcCanvas.height / srcCanvas.width);
-  const imgUrl = srcCanvas.toDataURL("image/jpeg", 0.82);
+  const dh = Math.round((W * srcCanvas.height) / srcCanvas.width);
+  const imgUrl = stylizeCanvas(srcCanvas).toDataURL("image/jpeg", 0.9);
+
   const [parts, setParts] = useState(DEFAULT_PARTS);
   const [dragging, setDragging] = useState(null);
   const ref = useRef(null);
 
-  const onDown = useCallback((e, id) => {
-    e.preventDefault();
-    if (!ref.current) return;
-    const rect = ref.current.getBoundingClientRect();
-    const sc = rect.width / W;
-    const p = parts.find(p => p.id === id);
-    if (!p) return;
-    const { x, y } = getXY(e);
-    setDragging({ id, ox: (x - rect.left) / sc - p.x * W, oy: (y - rect.top) / sc - p.y * dh });
-  }, [parts, dh]);
+  const onDown = useCallback(
+    (e, id) => {
+      e.preventDefault();
+      if (!ref.current) return;
 
-  const onMove = useCallback((e) => {
-    if (!dragging || !ref.current) return;
-    if (e.cancelable) e.preventDefault();
-    const rect = ref.current.getBoundingClientRect();
-    const sc = rect.width / W;
-    const { x, y } = getXY(e);
-    const nx = ((x - rect.left) / sc - dragging.ox) / W;
-    const ny = ((y - rect.top) / sc - dragging.oy) / dh;
-    setParts(prev => prev.map(p => p.id === dragging.id ? { ...p, x: Math.max(0, Math.min(1 - p.w, nx)), y: Math.max(0, Math.min(1 - p.h, ny)) } : p));
-  }, [dragging, dh]);
+      const rect = ref.current.getBoundingClientRect();
+      const sc = rect.width / W;
+      const p = parts.find((q) => q.id === id);
+      if (!p) return;
+
+      const { x, y } = getXY(e);
+
+      setDragging({
+        id,
+        ox: (x - rect.left) / sc - p.x * W,
+        oy: (y - rect.top) / sc - p.y * dh
+      });
+    },
+    [parts, dh]
+  );
+
+  const onMove = useCallback(
+    (e) => {
+      if (!dragging || !ref.current) return;
+      if (e.cancelable) e.preventDefault();
+
+      const rect = ref.current.getBoundingClientRect();
+      const sc = rect.width / W;
+      const { x, y } = getXY(e);
+
+      const nx = ((x - rect.left) / sc - dragging.ox) / W;
+      const ny = ((y - rect.top) / sc - dragging.oy) / dh;
+
+      setParts((prev) =>
+        prev.map((p) =>
+          p.id === dragging.id
+            ? {
+                ...p,
+                x: Math.max(0, Math.min(1 - p.w, nx)),
+                y: Math.max(0, Math.min(1 - p.h, ny))
+              }
+            : p
+        )
+      );
+    },
+    [dragging, dh]
+  );
 
   const onUp = useCallback(() => setDragging(null), []);
+
   useEffect(() => {
-    window.addEventListener("mousemove", onMove); window.addEventListener("mouseup", onUp);
-    window.addEventListener("touchmove", onMove, { passive: false }); window.addEventListener("touchend", onUp);
-    return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); window.removeEventListener("touchmove", onMove); window.removeEventListener("touchend", onUp); };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    window.addEventListener("touchmove", onMove, { passive: false });
+    window.addEventListener("touchend", onUp);
+
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      window.removeEventListener("touchmove", onMove);
+      window.removeEventListener("touchend", onUp);
+    };
   }, [onMove, onUp]);
 
   return (
-    <div onContextMenu={e => e.preventDefault()} style={{ minHeight: "100vh", background: "#1a0e0a", backgroundImage: "radial-gradient(ellipse at 50% 0%,rgba(180,100,40,0.22) 0%,transparent 70%)", display: "flex", flexDirection: "column", alignItems: "center", padding: "14px 0 28px", fontFamily: "'Hiragino Mincho ProN','Yu Mincho',Georgia,serif", ...noSelect }}>
-      <h1 style={{ color: "#f0c080", fontSize: 20, margin: "0 0 2px", fontWeight: 900, letterSpacing: 4 }}>🎭 パーツを合わせよう</h1>
-      <div style={{ width: 100, height: 1, background: "linear-gradient(90deg,transparent,#c8842a,transparent)", margin: "4px 0 6px" }} />
-      <p style={{ color: "#9a7050", fontSize: 11, margin: "0 0 10px", textAlign: "center", lineHeight: 1.7 }}>各パーツのボックスをドラッグして<br />正しい位置に合わせてください</p>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 5, justifyContent: "center", marginBottom: 10, maxWidth: W }}>
-        {parts.map(p => (
-          <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 4, background: "rgba(255,255,255,0.05)", borderRadius: 10, padding: "3px 7px" }}>
-            <div style={{ width: 9, height: 9, borderRadius: 2, background: p.color }} />
-            <span style={{ color: "#c8a060", fontSize: 10 }}>{p.label}</span>
+    <div
+      onContextMenu={(e) => e.preventDefault()}
+      style={{
+        minHeight: "100vh",
+        background: "#1a0e0a",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        padding: "14px 0 28px",
+        fontFamily: "'Hiragino Mincho ProN','Yu Mincho',Georgia,serif",
+        ...noSelect
+      }}
+    >
+      <h1 style={{ color: "#f0c080", fontSize: 20, margin: "0 0 6px", fontWeight: 900 }}>
+        🎭 パーツ位置を合わせる
+      </h1>
+
+      <p style={{ color: "#9a7050", fontSize: 11, margin: "0 0 10px", textAlign: "center" }}>
+        枠をドラッグして、目・鼻・口などに合わせてください
+      </p>
+
+      <div
+        ref={ref}
+        style={{
+          position: "relative",
+          width: W,
+          height: dh,
+          touchAction: "none",
+          borderRadius: 10,
+          overflow: "hidden",
+          boxShadow: "0 8px 32px rgba(0,0,0,0.7)"
+        }}
+      >
+        <img
+          src={imgUrl}
+          draggable={false}
+          alt="顔"
+          style={{ position: "absolute", top: 0, left: 0, width: W, height: dh }}
+        />
+
+        {parts.map((p) => (
+          <div
+            key={p.id}
+            onMouseDown={(e) => onDown(e, p.id)}
+            onTouchStart={(e) => onDown(e, p.id)}
+            style={{
+              position: "absolute",
+              left: p.x * W,
+              top: p.y * dh,
+              width: p.w * W,
+              height: p.h * dh,
+              border: `2px solid ${p.color}`,
+              background: `${p.color}28`,
+              cursor: dragging?.id === p.id ? "grabbing" : "grab",
+              boxSizing: "border-box"
+            }}
+          >
+            <div
+              style={{
+                position: "absolute",
+                top: -16,
+                left: 0,
+                background: p.color,
+                color: "#000",
+                fontSize: 9,
+                padding: "1px 5px",
+                fontWeight: "bold"
+              }}
+            >
+              {p.label}
+            </div>
           </div>
         ))}
       </div>
-      <div ref={ref} style={{ position: "relative", width: W, height: dh, touchAction: "none", ...noSelect, borderRadius: "10px 10px 0 0", overflow: "hidden", boxShadow: "0 8px 32px rgba(0,0,0,0.7)" }}>
-        <img src={imgUrl} draggable={false} alt="顔" style={{ position: "absolute", top: 0, left: 0, width: W, height: dh, display: "block" }} />
-        {parts.map(p => (
-          <div key={p.id} onMouseDown={e => onDown(e, p.id)} onTouchStart={e => onDown(e, p.id)}
-            style={{ position: "absolute", left: p.x * W, top: p.y * dh, width: p.w * W, height: p.h * dh, border: "2px solid " + p.color, background: p.color + "28", cursor: dragging && dragging.id === p.id ? "grabbing" : "grab", boxSizing: "border-box", boxShadow: dragging && dragging.id === p.id ? "0 0 0 2px " + p.color : "none" }}>
-            <div style={{ position: "absolute", top: -16, left: 0, background: p.color, color: "#000", fontSize: 9, padding: "1px 5px", borderRadius: "3px 3px 0 0", fontWeight: "bold", whiteSpace: "nowrap" }}>{p.label}</div>
-          </div>
-        ))}
-      </div>
+
       <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-        <button onClick={() => setParts(DEFAULT_PARTS)} style={{ background: "rgba(255,255,255,0.06)", color: "#9a7050", border: "1px solid rgba(150,100,40,0.4)", borderRadius: 20, padding: "8px 14px", cursor: "pointer", fontSize: 12, fontFamily: "inherit" }}>🔄 リセット</button>
-        <button onClick={() => onStart(parts)} style={{ background: "linear-gradient(135deg,#c8842a,#f0a040)", color: "#1a0800", border: "none", borderRadius: 20, padding: "9px 20px", cursor: "pointer", fontSize: 14, fontWeight: "bold", letterSpacing: 1, boxShadow: "0 4px 14px rgba(200,130,42,0.5)", fontFamily: "inherit" }}>ゲームスタート！🎭</button>
+        <button onClick={() => setParts(DEFAULT_PARTS)}>リセット</button>
+        <button onClick={() => onStart(parts)}>ゲームスタート！🎭</button>
       </div>
     </div>
   );
 }
 
-// ─── GameScreen ────────────────────────────────────────────────
 function GameScreen({ gd, onReset }) {
   const [pieces, setPieces] = useState(() => scatter(gd.pieces, gd.displayH));
-  const [drag, setDrag]     = useState(null);
-  const [rot,  setRot]      = useState(null);
-  const [hint, setHint]     = useState(false);
-  const [solved, setSolved] = useState(false);
+  const [drag, setDrag] = useState(null);
+  const [rot, setRot] = useState(null);
+  const [hint, setHint] = useState(false);
   const ref = useRef(null);
 
-  const onPieceDown = useCallback((e, id) => {
-    e.preventDefault();
-    if (!ref.current) return;
-    const rect = ref.current.getBoundingClientRect();
-    const sc = rect.width / W;
-    const p = pieces.find(p => p.id === id);
-    if (!p) return;
-    const { x, y } = getXY(e);
-    setDrag({ id, ox: (x - rect.left) / sc - p.currentX, oy: (y - rect.top) / sc - p.currentY });
-    setPieces(prev => [...prev.filter(q => q.id !== id), p]);
-    setSolved(false);
-  }, [pieces]);
+  const onPieceDown = useCallback(
+    (e, id) => {
+      e.preventDefault();
+      if (!ref.current) return;
 
-  const onRotDown = useCallback((e, id) => {
-    e.preventDefault(); e.stopPropagation();
-    if (!ref.current) return;
-    const rect = ref.current.getBoundingClientRect();
-    const sc = rect.width / W;
-    const p = pieces.find(p => p.id === id);
-    if (!p) return;
-    const { x, y } = getXY(e);
-    const cx = p.currentX + p.w / 2, cy = p.currentY + p.h / 2;
-    const startAngle = Math.atan2((y - rect.top) / sc - cy, (x - rect.left) / sc - cx);
-    setRot({ id, startAngle, startRotation: p.rotation || 0, cx, cy });
-    setSolved(false);
-  }, [pieces]);
+      const rect = ref.current.getBoundingClientRect();
+      const sc = rect.width / W;
+      const p = pieces.find((q) => q.id === id);
+      if (!p) return;
 
-  const onMove = useCallback((e) => {
-    if (!ref.current) return;
-    if (e.cancelable) e.preventDefault();
-    const rect = ref.current.getBoundingClientRect();
-    const sc = rect.width / W;
-    const { x, y } = getXY(e);
-    if (drag) {
-      setPieces(prev => prev.map(p => p.id === drag.id ? { ...p, currentX: (x - rect.left) / sc - drag.ox, currentY: (y - rect.top) / sc - drag.oy } : p));
-    } else if (rot) {
-      const nx = (x - rect.left) / sc, ny = (y - rect.top) / sc;
-      const curAngle = Math.atan2(ny - rot.cy, nx - rot.cx);
-      const delta = (curAngle - rot.startAngle) * 180 / Math.PI;
-      setPieces(prev => prev.map(p => p.id === rot.id ? { ...p, rotation: rot.startRotation + delta } : p));
-    }
-  }, [drag, rot]);
+      const { x, y } = getXY(e);
 
-  const onUp = useCallback(() => { setDrag(null); setRot(null); }, []);
+      setDrag({
+        id,
+        ox: (x - rect.left) / sc - p.currentX,
+        oy: (y - rect.top) / sc - p.currentY
+      });
+
+      setPieces((prev) => [...prev.filter((q) => q.id !== id), p]);
+    },
+    [pieces]
+  );
+
+  const onRotDown = useCallback(
+    (e, id) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!ref.current) return;
+
+      const rect = ref.current.getBoundingClientRect();
+      const sc = rect.width / W;
+      const p = pieces.find((q) => q.id === id);
+      if (!p) return;
+
+      const { x, y } = getXY(e);
+      const cx = p.currentX + p.w / 2;
+      const cy = p.currentY + p.h / 2;
+      const startAngle = Math.atan2((y - rect.top) / sc - cy, (x - rect.left) / sc - cx);
+
+      setRot({
+        id,
+        startAngle,
+        startRotation: p.rotation || 0,
+        cx,
+        cy
+      });
+    },
+    [pieces]
+  );
+
+  const onMove = useCallback(
+    (e) => {
+      if (!ref.current) return;
+      if (e.cancelable) e.preventDefault();
+
+      const rect = ref.current.getBoundingClientRect();
+      const sc = rect.width / W;
+      const { x, y } = getXY(e);
+
+      if (drag) {
+        setPieces((prev) =>
+          prev.map((p) =>
+            p.id === drag.id
+              ? {
+                  ...p,
+                  currentX: (x - rect.left) / sc - drag.ox,
+                  currentY: (y - rect.top) / sc - drag.oy
+                }
+              : p
+          )
+        );
+      } else if (rot) {
+        const nx = (x - rect.left) / sc;
+        const ny = (y - rect.top) / sc;
+        const curAngle = Math.atan2(ny - rot.cy, nx - rot.cx);
+        const delta = ((curAngle - rot.startAngle) * 180) / Math.PI;
+
+        setPieces((prev) =>
+          prev.map((p) =>
+            p.id === rot.id
+              ? {
+                  ...p,
+                  rotation: rot.startRotation + delta
+                }
+              : p
+          )
+        );
+      }
+    },
+    [drag, rot]
+  );
+
+  const onUp = useCallback(() => {
+    setDrag(null);
+    setRot(null);
+  }, []);
+
   useEffect(() => {
-    window.addEventListener("mousemove", onMove); window.addEventListener("mouseup", onUp);
-    window.addEventListener("touchmove", onMove, { passive: false }); window.addEventListener("touchend", onUp);
-    return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); window.removeEventListener("touchmove", onMove); window.removeEventListener("touchend", onUp); };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    window.addEventListener("touchmove", onMove, { passive: false });
+    window.addEventListener("touchend", onUp);
+
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      window.removeEventListener("touchmove", onMove);
+      window.removeEventListener("touchend", onUp);
+    };
   }, [onMove, onUp]);
 
   const totalH = gd.displayH + TRAY_H;
-  const activeId = (drag && drag.id) || (rot && rot.id);
+  const activeId = drag?.id ?? rot?.id;
 
   return (
-    <div onContextMenu={e => e.preventDefault()} style={{ minHeight: "100vh", background: "#1a0e0a", backgroundImage: "radial-gradient(ellipse at 50% 0%,rgba(180,100,40,0.18) 0%,transparent 60%)", display: "flex", flexDirection: "column", alignItems: "center", padding: "14px 0 32px", fontFamily: "'Hiragino Mincho ProN','Yu Mincho',Georgia,serif", ...noSelect }}>
-      <h1 style={{ color: "#f0c080", fontSize: 22, margin: "0 0 2px", fontWeight: 900, letterSpacing: 6, textShadow: "0 0 20px rgba(240,192,128,0.5)" }}>🎭 福笑い</h1>
-      <div style={{ width: 100, height: 1, background: "linear-gradient(90deg,transparent,#c8842a,transparent)", margin: "4px 0 8px" }} />
-      <p style={{ color: "#7a5a38", fontSize: 11, margin: "0 0 12px", letterSpacing: 1 }}>ドラッグで移動・↻で回転</p>
+    <div
+      onContextMenu={(e) => e.preventDefault()}
+      style={{
+        minHeight: "100vh",
+        background: "#1a0e0a",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        padding: "14px 0 32px",
+        fontFamily: "'Hiragino Mincho ProN','Yu Mincho',Georgia,serif",
+        ...noSelect
+      }}
+    >
+      <h1 style={{ color: "#f0c080", fontSize: 22, margin: "0 0 10px", fontWeight: 900 }}>
+        🎭 福笑い
+      </h1>
 
-      <div ref={ref} onContextMenu={e => e.preventDefault()}
-        style={{ position: "relative", width: W, height: totalH, touchAction: "none", ...noSelect, borderRadius: 12, overflow: "hidden", boxShadow: "0 12px 48px rgba(0,0,0,0.8),0 0 0 1px rgba(200,132,42,0.3)" }}>
+      <div
+        ref={ref}
+        style={{
+          position: "relative",
+          width: W,
+          height: totalH,
+          touchAction: "none",
+          borderRadius: 12,
+          overflow: "hidden",
+          boxShadow: "0 12px 48px rgba(0,0,0,0.8)"
+        }}
+      >
+        <img
+          src={hint ? gd.origUrl : gd.maskedUrl}
+          draggable={false}
+          alt="顔"
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            width: W,
+            height: gd.displayH
+          }}
+        />
 
-        <img src={hint ? gd.origUrl : gd.maskedUrl} draggable={false} alt="顔"
-          style={{ position: "absolute", top: 0, left: 0, width: W, height: gd.displayH, display: "block" }} />
-
-        {solved && (
-          <div style={{ position: "absolute", top: 0, left: 0, width: "100%", height: gd.displayH, background: "rgba(240,192,64,0.18)", display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
-            <div style={{ background: "rgba(20,10,5,0.88)", color: "#f0c060", fontSize: 20, fontWeight: "bold", padding: "10px 24px", borderRadius: 40, border: "2px solid rgba(240,192,64,0.6)", letterSpacing: 3 }}>✨ 完成！</div>
-          </div>
-        )}
-        {hint && <div style={{ position: "absolute", top: 8, left: "50%", transform: "translateX(-50%)", background: "rgba(240,160,40,0.9)", color: "white", fontSize: 11, padding: "3px 12px", borderRadius: 12, fontWeight: "bold", pointerEvents: "none" }}>💡 ヒント表示中</div>}
-
-        <div style={{ position: "absolute", top: gd.displayH, left: 0, width: "100%", height: TRAY_H, background: "#1e1208", backgroundImage: "repeating-linear-gradient(0deg,rgba(200,130,50,0.04) 0,rgba(200,130,50,0.04) 1px,transparent 1px,transparent 20px),repeating-linear-gradient(90deg,rgba(200,130,50,0.04) 0,rgba(200,130,50,0.04) 1px,transparent 1px,transparent 20px)", borderTop: "1px solid rgba(200,130,50,0.35)" }}>
-          <p style={{ textAlign: "center", color: "rgba(200,130,50,0.4)", fontSize: 10, margin: "6px 0 0", letterSpacing: 2 }}>── パーツトレイ ──</p>
-        </div>
+        <div
+          style={{
+            position: "absolute",
+            top: gd.displayH,
+            left: 0,
+            width: "100%",
+            height: TRAY_H,
+            background: "#1e1208",
+            borderTop: "1px solid rgba(200,130,50,0.35)"
+          }}
+        />
 
         {pieces.map((p, idx) => {
           const isActive = activeId === p.id;
+
           return (
-            <div key={p.id} style={{ position: "absolute", left: p.currentX, top: p.currentY, width: p.w, height: p.h, transform: "rotate(" + (p.rotation || 0) + "deg)", transformOrigin: "center center", zIndex: isActive ? 999 : 100 + idx, filter: isActive ? "drop-shadow(0 10px 24px rgba(0,0,0,0.9))" : "drop-shadow(0 2px 8px rgba(0,0,0,0.6))", transition: isActive ? "filter 0.1s" : "filter 0.2s" }}>
-              <img src={p.dataUrl} draggable={false} alt={p.label}
-                onMouseDown={e => onPieceDown(e, p.id)} onTouchStart={e => onPieceDown(e, p.id)}
-                style={{ width: "100%", height: "100%", display: "block", borderRadius: 3, border: "2px solid rgba(240,160,64,0.85)", boxSizing: "border-box", cursor: drag && drag.id === p.id ? "grabbing" : "grab" }} />
-              <div style={{ position: "absolute", bottom: -18, left: "50%", transform: "translateX(-50%)", background: "rgba(200,100,30,0.92)", color: "#fff5e0", fontSize: 10, padding: "1px 7px", borderRadius: 8, whiteSpace: "nowrap", pointerEvents: "none", fontWeight: "bold", letterSpacing: 1 }}>{p.label}</div>
-              <div onMouseDown={e => onRotDown(e, p.id)} onTouchStart={e => onRotDown(e, p.id)}
-                style={{ position: "absolute", top: -14, right: -14, width: 22, height: 22, borderRadius: "50%", background: rot && rot.id === p.id ? "#f0a040" : "rgba(240,160,64,0.85)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, cursor: "grab", touchAction: "none", boxShadow: "0 2px 6px rgba(0,0,0,0.5)", border: "1.5px solid rgba(255,220,120,0.6)", zIndex: 10 }}>↻</div>
+            <div
+              key={p.id}
+              style={{
+                position: "absolute",
+                left: p.currentX,
+                top: p.currentY,
+                width: p.w,
+                height: p.h,
+                transform: `rotate(${p.rotation || 0}deg)`,
+                transformOrigin: "center center",
+                zIndex: isActive ? 999 : 100 + idx,
+                filter: isActive
+                  ? "drop-shadow(0 10px 24px rgba(0,0,0,0.9))"
+                  : "drop-shadow(0 2px 8px rgba(0,0,0,0.6))"
+              }}
+            >
+              <img
+                src={p.dataUrl}
+                draggable={false}
+                alt={p.label}
+                onMouseDown={(e) => onPieceDown(e, p.id)}
+                onTouchStart={(e) => onPieceDown(e, p.id)}
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  display: "block",
+                  borderRadius: 3,
+                  border: "2px solid rgba(240,160,64,0.85)",
+                  boxSizing: "border-box",
+                  cursor: drag?.id === p.id ? "grabbing" : "grab"
+                }}
+              />
+
+              <div
+                style={{
+                  position: "absolute",
+                  bottom: -18,
+                  left: "50%",
+                  transform: "translateX(-50%)",
+                  background: "rgba(200,100,30,0.92)",
+                  color: "#fff5e0",
+                  fontSize: 10,
+                  padding: "1px 7px",
+                  borderRadius: 8,
+                  whiteSpace: "nowrap",
+                  pointerEvents: "none"
+                }}
+              >
+                {p.label}
+              </div>
+
+              <div
+                onMouseDown={(e) => onRotDown(e, p.id)}
+                onTouchStart={(e) => onRotDown(e, p.id)}
+                style={{
+                  position: "absolute",
+                  top: -14,
+                  right: -14,
+                  width: 22,
+                  height: 22,
+                  borderRadius: "50%",
+                  background: "#f0a040",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: 13,
+                  cursor: "grab",
+                  touchAction: "none",
+                  boxShadow: "0 2px 6px rgba(0,0,0,0.5)",
+                  zIndex: 10
+                }}
+              >
+                ↻
+              </div>
             </div>
           );
         })}
       </div>
 
       <div style={{ display: "flex", gap: 8, marginTop: 18, flexWrap: "wrap", justifyContent: "center" }}>
-        <button onClick={() => setPieces(prev => scatter(prev, gd.displayH))} style={{ background: "linear-gradient(135deg,#c8842a,#f0a040)", color: "#1a0800", border: "none", borderRadius: 24, padding: "9px 18px", cursor: "pointer", fontSize: 13, fontWeight: "bold", letterSpacing: 1, boxShadow: "0 4px 16px rgba(200,130,42,0.4)", fontFamily: "inherit" }}>🔀 シャッフル</button>
-        <button onClick={() => { setPieces(prev => prev.map(p => ({ ...p, currentX: p.origX, currentY: p.origY, rotation: 0 }))); setSolved(true); }} style={{ background: "linear-gradient(135deg,#3a7a3a,#5aaa5a)", color: "#e0ffe0", border: "none", borderRadius: 24, padding: "9px 18px", cursor: "pointer", fontSize: 13, fontWeight: "bold", letterSpacing: 1, fontFamily: "inherit" }}>✅ 答え合わせ</button>
-        <button onMouseDown={() => setHint(true)} onMouseUp={() => setHint(false)} onMouseLeave={() => setHint(false)} onTouchStart={() => setHint(true)} onTouchEnd={() => setHint(false)} style={{ background: "linear-gradient(135deg,#4a3a22,#6a5a32)", color: "#d4b060", border: "1px solid rgba(200,160,64,0.4)", borderRadius: 24, padding: "9px 18px", cursor: "pointer", fontSize: 13, fontWeight: "bold", fontFamily: "inherit" }}>💡 ヒント</button>
-        <button onClick={onReset} style={{ background: "rgba(255,255,255,0.04)", color: "#7a5a38", border: "1px solid rgba(120,80,40,0.4)", borderRadius: 24, padding: "9px 18px", cursor: "pointer", fontSize: 13, fontFamily: "inherit" }}>📷 写真を変える</button>
+        <button onClick={() => setPieces((prev) => scatter(prev, gd.displayH))}>シャッフル</button>
+
+        <button
+          onClick={() =>
+            setPieces((prev) =>
+              prev.map((p) => ({
+                ...p,
+                currentX: p.origX,
+                currentY: p.origY,
+                rotation: 0
+              }))
+            )
+          }
+        >
+          答え合わせ
+        </button>
+
+        <button
+          onMouseDown={() => setHint(true)}
+          onMouseUp={() => setHint(false)}
+          onMouseLeave={() => setHint(false)}
+          onTouchStart={() => setHint(true)}
+          onTouchEnd={() => setHint(false)}
+        >
+          ヒント
+        </button>
+
+        <button onClick={onReset}>写真を変える</button>
       </div>
     </div>
   );
 }
 
-// ─── UploadScreen ──────────────────────────────────────────────
 function UploadScreen({ onFile, err, loading }) {
-  const [hover, setHover] = useState(false);
   return (
-    <div onContextMenu={e => e.preventDefault()} style={{ minHeight: "100vh", background: "#1a0e0a", backgroundImage: "radial-gradient(ellipse at 50% 0%,rgba(180,100,40,0.25) 0%,transparent 70%)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24, boxSizing: "border-box", fontFamily: "'Hiragino Mincho ProN','Yu Mincho',Georgia,serif", ...noSelect }}>
-      <div style={{ fontSize: 60, lineHeight: 1, filter: "drop-shadow(0 4px 12px rgba(220,130,60,0.6))" }}>🎭</div>
-      <h1 style={{ color: "#f0c080", fontSize: 34, margin: "10px 0 4px", fontWeight: 900, letterSpacing: 8, textShadow: "0 0 30px rgba(240,192,128,0.5)" }}>福笑い</h1>
-      <div style={{ width: 120, height: 2, background: "linear-gradient(90deg,transparent,#c8842a,transparent)", margin: "4px 0 14px" }} />
-      <p style={{ color: "#a08060", fontSize: 13, margin: "0 0 28px", textAlign: "center", lineHeight: 2.1 }}>
-        顔の写真をアップロードすると<br />AIがパーツを自動検出！<br />
-        <span style={{ color: "#c8a070", fontStyle: "italic" }}>できない場合は手動で設定できます</span>
+    <div
+      onContextMenu={(e) => e.preventDefault()}
+      style={{
+        minHeight: "100vh",
+        background: "#1a0e0a",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 24,
+        boxSizing: "border-box",
+        fontFamily: "'Hiragino Mincho ProN','Yu Mincho',Georgia,serif",
+        ...noSelect
+      }}
+    >
+      <div style={{ fontSize: 60 }}>🎭</div>
+
+      <h1 style={{ color: "#f0c080", fontSize: 34, margin: "10px 0 4px", fontWeight: 900 }}>
+        福笑い
+      </h1>
+
+      <p style={{ color: "#a08060", fontSize: 13, margin: "0 0 28px", textAlign: "center", lineHeight: 2 }}>
+        顔の写真を選ぶと、イラスト風に変換して<br />
+        パーツを切り抜いて遊べます
       </p>
+
       {loading ? (
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
-          <div style={{ position: "relative", width: 70, height: 70 }}>
-            <div style={{ position: "absolute", inset: 0, borderRadius: "50%", border: "3px solid transparent", borderTopColor: "#f0a040", borderRightColor: "#c8842a", animation: "spin 1s linear infinite" }} />
-            <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28 }}>👁️</div>
-          </div>
-          <p style={{ color: "#f0c080", fontSize: 15, margin: 0 }}>画像を処理中…</p>
-        </div>
+        <p style={{ color: "#f0c080" }}>画像を処理中…</p>
       ) : (
-        <React.Fragment>
-          <div onClick={() => document.getElementById("__fuki_fi").click()}
-            onDrop={e => { e.preventDefault(); setHover(false); onFile(e.dataTransfer.files[0]); }}
-            onDragOver={e => { e.preventDefault(); setHover(true); }}
-            onDragLeave={() => setHover(false)}
-            style={{ width: 260, height: 160, border: "2px " + (hover ? "solid #f0a040" : "dashed #6b4a28"), borderRadius: 8, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", cursor: "pointer", gap: 10, background: hover ? "rgba(240,160,64,0.1)" : "rgba(255,255,255,0.02)", color: hover ? "#f0a040" : "#8b6040", transition: "all 0.2s" }}>
+        <>
+          <div
+            onClick={() => document.getElementById("__fuki_fi").click()}
+            style={{
+              width: 260,
+              height: 160,
+              border: "2px dashed #6b4a28",
+              borderRadius: 8,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: "pointer",
+              gap: 10,
+              background: "rgba(255,255,255,0.02)",
+              color: "#8b6040"
+            }}
+          >
             <div style={{ fontSize: 44 }}>📷</div>
-            <div style={{ fontSize: 14, fontWeight: "bold", letterSpacing: 1 }}>タップして写真を選ぶ</div>
-            <div style={{ fontSize: 11, opacity: 0.7 }}>JPEG・PNG・HEIC など</div>
+            <div style={{ fontSize: 14, fontWeight: "bold" }}>写真を選ぶ</div>
+            <div style={{ fontSize: 11, opacity: 0.7 }}>JPEG・PNG</div>
           </div>
-          <input id="__fuki_fi" type="file" accept="image/*,image/heic,image/heif,.heic,.heif"
-            style={{ display: "none" }} onChange={e => { if (e.target.files[0]) onFile(e.target.files[0]); }} />
-        </React.Fragment>
+
+          <input
+            id="__fuki_fi"
+            type="file"
+            accept="image/*"
+            style={{ display: "none" }}
+            onChange={(e) => {
+              if (e.target.files?.[0]) onFile(e.target.files[0]);
+            }}
+          />
+        </>
       )}
-      {err && <div style={{ marginTop: 20, color: "#fca5a5", fontSize: 12, textAlign: "center", maxWidth: 280, padding: "10px 16px", background: "rgba(239,68,68,0.12)", borderRadius: 8, border: "1px solid rgba(239,68,68,0.3)", lineHeight: 1.6 }}>⚠️ {err}</div>}
+
+      {err && (
+        <div
+          style={{
+            marginTop: 20,
+            color: "#fca5a5",
+            fontSize: 12,
+            textAlign: "center",
+            maxWidth: 280,
+            padding: "10px 16px",
+            background: "rgba(239,68,68,0.12)",
+            borderRadius: 8
+          }}
+        >
+          ⚠️ {err}
+        </div>
+      )}
     </div>
   );
 }
 
-// ─── App Root ──────────────────────────────────────────────────
-function App() {
-  const [phase, setPhase]     = useState("upload");
+export default function App() {
+  const [phase, setPhase] = useState("upload");
   const [loading, setLoading] = useState(false);
-  const [err, setErr]         = useState("");
-  const [srcCanvas, setSrc]   = useState(null);
-  const [gd, setGd]           = useState(null);
+  const [err, setErr] = useState("");
+  const [srcCanvas, setSrcCanvas] = useState(null);
+  const [gd, setGd] = useState(null);
 
   const handleFile = async (file) => {
     if (!file) return;
-    setLoading(true); setErr("");
+
+    setLoading(true);
+    setErr("");
+
     try {
       const canvas = await fileToCanvas(file);
-      let feats = null;
-      try {
-        const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 12000));
-        feats = await Promise.race([apiDetect(canvas), timeout]);
-      } catch {
-        setSrc(canvas); setPhase("manual"); setLoading(false); return;
-      }
-      const game = buildGame(canvas, feats);
-      setGd(game); setPhase("game");
+      setSrcCanvas(canvas);
+      setPhase("manual");
     } catch (e) {
       setErr(e.message || "エラーが発生しました");
     } finally {
@@ -445,18 +814,34 @@ function App() {
   };
 
   const handleManualStart = (parts) => {
-    const game = buildGame(srcCanvas, parts.map(p => ({ id: p.id, label: p.label, x: p.x, y: p.y, w: p.w, h: p.h })));
-    setGd(game); setPhase("game");
+    const feats = parts.map((p) => ({
+      id: p.id,
+      label: p.label,
+      x: p.x,
+      y: p.y,
+      w: p.w,
+      h: p.h
+    }));
+
+    const game = buildGame(srcCanvas, feats);
+    setGd(game);
+    setPhase("game");
   };
 
-  const reset = () => { setPhase("upload"); setGd(null); setSrc(null); setErr(""); };
+  const reset = () => {
+    setPhase("upload");
+    setGd(null);
+    setSrcCanvas(null);
+    setErr("");
+  };
 
-  if (phase === "manual") return <ManualScreen srcCanvas={srcCanvas} onStart={handleManualStart} />;
-  if (phase === "game")   return <GameScreen gd={gd} onReset={reset} />;
+  if (phase === "manual") {
+    return <ManualScreen srcCanvas={srcCanvas} onStart={handleManualStart} />;
+  }
+
+  if (phase === "game") {
+    return <GameScreen gd={gd} onReset={reset} />;
+  }
+
   return <UploadScreen onFile={handleFile} err={err} loading={loading} />;
 }
-
-ReactDOM.createRoot(document.getElementById("root")).render(<App />);
-</script>
-</body>
-</html>
